@@ -1,0 +1,24 @@
+# @package _global_
+# Finite-epoch Beauty experiment for one or more A100 GPUs.
+defaults:
+  - tiger_train_flat
+  - _self_
+
+gpu_count: 1
+accumulation_steps: 16
+
+trainer:
+  devices: ${gpu_count}
+  strategy: ddp
+  max_steps: -1
+  max_epochs: 20
+  precision: bf16-mixed
+  accumulate_grad_batches: ${accumulation_steps}
+  val_check_interval: null
+  check_val_every_n_epoch: 1
+
+data_loading:
+  train_dataloader_config:
+    dataloader:
+      # Each rank and DataLoader worker receives a distinct file shard.
+      assign_all_files_per_worker: false

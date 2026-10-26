@@ -1,0 +1,96 @@
+{
+  "train": true,
+  "test": true,
+  "ckpt_path": null,
+  "seed": null,
+  "data_dir": "data/amazon_data/beauty",
+  "semantic_id_path": "<output_path_from_rkmeans_inference>/pickle/merged_predictions_tensor.pt",
+  "num_hierarchies": 4,
+  "embedding_model": "google/flan-t5-xl",
+  "embedding_dim": 2048,
+  "codebook_width": 256,
+  "trainer": {
+    "max_epochs": 150,
+    "precision": "32-true",
+    "accumulate_grad_batches": 16,
+    "val_check_interval": 100,
+    "check_val_every_n_epoch": null,
+    "devices": -1,
+    "accelerator": "gpu"
+  },
+  "data_loading": {
+    "train_dataloader_config": {
+      "dataloader": {
+        "batch_size_per_device": 32,
+        "sequence_length": 120,
+        "drop_last": true,
+        "num_workers": 8,
+        "max_batch_size": 512,
+        "assign_all_files_per_worker": false
+      }
+    }
+  },
+  "model": {
+    "huggingface_model": {
+      "config": {
+        "d_model": 128,
+        "num_heads": 6,
+        "d_ff": 1024,
+        "dropout_rate": 0.15,
+        "num_layers": 4
+      }
+    },
+    "decoder": {
+      "config": {
+        "num_layers": 4,
+        "num_heads": 6,
+        "d_model": 128,
+        "d_ff": 1024,
+        "dropout_rate": 0.15
+      }
+    },
+    "weight_tying": true,
+    "num_user_bins": null,
+    "mlp_layers": 2,
+    "top_k_for_generation": 10
+  },
+  "loss": {
+    "loss_function": "torch.nn.CrossEntropyLoss"
+  },
+  "optim": {
+    "optimizer": {
+      "_target_": "torch.optim.Adam",
+      "lr": 0.0005,
+      "weight_decay": 1e-06
+    },
+    "scheduler": null
+  },
+  "callbacks": {
+    "model_checkpoint": {
+      "monitor": "val/recall@10",
+      "mode": "max",
+      "save_top_k": 1
+    },
+    "early_stopping": {
+      "monitor": "val/ndcg@10",
+      "mode": "max",
+      "patience": 10
+    }
+  },
+  "eval": {
+    "evaluator": {
+      "top_k_list": [
+        5,
+        10
+      ]
+    }
+  },
+  "training_budget": {
+    "target_max_steps": 200000,
+    "training_records_per_epoch": 22363,
+    "batches_per_epoch": 698,
+    "optimizer_steps_per_epoch": 44,
+    "max_epochs_formula": "floor(target_max_steps / optimizer_steps_per_epoch)",
+    "effective_max_steps": 199980
+  }
+}
