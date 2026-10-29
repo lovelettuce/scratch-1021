@@ -258,6 +258,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         past_key_values: Union[EncoderDecoderCache, None],
         hierarchy: int,
         batch_size: int,
+        candidate_observer=None,
     ):
         """
         Perform one step of beam search.
@@ -333,6 +334,8 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             ), indices.reshape(
                 -1, self.top_k_for_generation * self.num_embeddings_per_hierarchy
             )
+            if candidate_observer is not None:
+                conditional_probabilities = proba.detach().clone()
             # calculating the marginal probability
             proba = torch.mul(
                 marginal_log_prob.repeat_interleave(
@@ -340,6 +343,16 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
                 ),
                 proba,
             )
+            if candidate_observer is not None:
+                # Diagnostic snapshots never alias tensors used by search or its cache.
+                candidate_observer({
+                    "hierarchy": hierarchy,
+                    "parent_prefixes": generated_ids.detach().clone(),
+                    "parent_scores": marginal_log_prob.detach().clone(),
+                    "next_token_ids": indices.detach().clone(),
+                    "conditional_probabilities": conditional_probabilities,
+                    "cumulative_scores": proba.detach().clone(),
+                })
             topk_results = torch.topk(
                 torch.nan_to_num(proba, nan=-1), k=self.top_k_for_generation, dim=-1
             )
@@ -740,6 +753,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         attention_mask: torch.Tensor,
         input_ids: torch.Tensor,
         user_id: torch.Tensor = None,
+        step_observer=None,
+        candidate_observer=None,
     ) -> torch.Tensor:
         """
         Generate the semantic id given the current model in the sequence using beam search.
@@ -822,7 +837,13 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 past_key_values=past_key_values,
                 hierarchy=hierarchy,
                 batch_size=input_ids.size(0),
+                candidate_observer=candidate_observer if hierarchy == 1 else None,
             )
+
+            if step_observer is not None:
+                # Observers receive detached snapshots and cannot mutate live search state.
+                step_observer(hierarchy, generated_ids.detach().clone(),
+                              marginal_log_prob.detach().clone())
 
         return generated_ids, marginal_log_prob
 

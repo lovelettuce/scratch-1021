@@ -1,0 +1,97 @@
+# @package _global_
+# Same complete RQ-VAE architecture as training; runner uses the exact archive.
+defaults:
+- rkmeans_inference_flat
+- _self_
+model:
+  _target_: src.modules.clustering.residual_quantization.ResidualQuantization
+  track_residuals: true
+  verbose: true
+  train_layer_wise: false
+  normalize_residuals: false
+  input_dim: ${embedding_dim}
+  n_layers: ${num_hierarchies}
+  normalization_layer:
+    _target_: torch.nn.Sequential
+    _args_:
+    - _target_: torch.nn.BatchNorm1d
+      num_features: ${model.input_dim}
+    - _target_: src.models.components.network_blocks.normalize_layer.NormalizeLayer
+  encoder:
+    _target_: src.models.components.network_blocks.mlp.MLP
+    input_dim: ${model.input_dim}
+    hidden_dim_list:
+    - 768
+    - 256
+    - 128
+    output_dim: 64
+    activation:
+      _target_: torch.nn.ReLU
+      _partial_: true
+  decoder:
+    _target_: src.models.components.network_blocks.mlp.MLP
+    input_dim: ${model.encoder.output_dim}
+    hidden_dim_list:
+    - 128
+    - 256
+    - 768
+    output_dim: ${model.input_dim}
+    activation:
+      _target_: torch.nn.ReLU
+      _partial_: true
+  init_buffer_size: 3072
+  quantization_layer:
+    _target_: src.modules.clustering.vector_quantization.VectorQuantization
+    n_clusters: ${codebook_width}
+    n_features: ${model.encoder.output_dim}
+    distance_function:
+      _target_: src.components.distance_functions.SquaredEuclideanDistance
+    quantization_strategy:
+      _target_: src.components.quantization_strategies.STEQuantization
+      distance_function: ${model.quantization_layer.distance_function}
+      compute_reconstruction_loss_embeddings: true
+    initializer:
+      _target_: src.components.clustering_initializers.ClusteringModuleInitializer
+      n_clusters: ${model.quantization_layer.n_clusters}
+      initialize_on_cpu: false
+      clustering_module:
+        _target_: src.models.modules.clustering.mini_batch_kmeans.MiniBatchKMeans
+        n_clusters: ${model.quantization_layer.n_clusters}
+        n_features: ${model.quantization_layer.n_features}
+        distance_function: ${model.quantization_layer.distance_function}
+        initializer:
+          _target_: src.components.clustering_initializers.KMeansPlusPlusInitInitializer
+          n_clusters: ${model.quantization_layer.n_clusters}
+          distance_function: ${model.quantization_layer.distance_function}
+          initialize_on_cpu: false
+        init_buffer_size: ${model.init_buffer_size}
+        update_manually: true
+      max_iter: 1000
+    init_buffer_size: ${model.init_buffer_size}
+    loss_function:
+      _target_: src.components.loss_functions.BetaQuantizationLoss
+      beta: 0.25
+      reduction: mean
+    optimizer: null
+  reconstruction_loss_function:
+    _target_: torch.nn.MSELoss
+    reduction: mean
+  reconstruction_loss_weight: 1.0
+  training_loop_function:
+    _target_: src.components.training_loop_functions.scale_loss_by_world_size_for_initialization_training_loop
+    _partial_: true
+  optimizer: null
+  scheduler: null
+  quantization_layer_list: null
+optim:
+  optimizer:
+    _target_: torch.optim.Adagrad
+    _partial_: true
+    lr: 0.001
+    weight_decay: 0.0
+  scheduler:
+    _target_: src.components.scheduler.WarmupLinearScheduler
+    _partial_: true
+    warmup_steps: 1000
+    min_ratio: 0.01
+    scheduler_steps: ${trainer.max_steps}

@@ -69,6 +69,31 @@ python -m src.train experiment=rkmeans_train_flat \
     codebook_width=256 \ # each codebook has 256 rows of centroids  
 ```
 
+
+SID tokenizer training defaults follow [GRID, Section 4](https://arxiv.org/html/2507.22224v1#S4):
+
+| Experiment | Training budget | Optimizer | Learning rate |
+| --- | --- | --- | --- |
+| `rkmeans_train_flat` | 1,000 steps per layer (3,000 with 3 layers) | SGD | 0.5 |
+| `rvq_train_flat` | 1,000 steps per layer (3,000 with 3 layers) | Adam | 0.001 |
+| `rqvae_train_flat` | 15,000 total steps | Adagrad | 0.001 |
+
+All three default to 3 codebooks of 256 entries, 8 GPUs, and batch size 2,048
+per GPU (global batch size 16,384). Input embedding paths and dimensions remain
+required. Training stops at the step budget, with no epoch cap or early stopping;
+the checkpoint is saved at the final step budget. RK-Means and RVQ normalize
+residuals; RQ-VAE uses the existing BatchNorm + L2 input normalization and jointly
+trains the autoencoder and codebooks. The paper describes RQ-VAE preprocessing as
+whitening; this preset retains the repository's implementation. SGD with learning
+rate 0.5 for RK-Means comes from the implementation; the paper specifies the
+optimizers and learning rates for RVQ and RQ-VAE.
+
+Override `trainer.devices=1` to run on one GPU, or set it to another available
+GPU count. With batch size unchanged, this changes the global batch size relative
+to the paper. Changing `num_hierarchies` automatically adjusts the RK-Means/RVQ
+step budget to preserve 1,000 steps per layer. Historical configurations and
+checkpoints under `outputs/` retain their original training budgets.
+
 Generate SIDs:
 
 ```bash
@@ -221,3 +246,19 @@ For questions and support:
 [3] Lee, Doyup, et al. "Autoregressive image generation using residual quantization." Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. 2022.
 
 [4] Geng, Shijie, et al. "Recommendation as language processing (rlp): A unified pretrain, personalized prompt & predict paradigm (p5)." Proceedings of the 16th ACM conference on recommender systems. 2022.
+
+## Long-tail recommendation evaluation
+
+See [the long-tail evaluation guide](docs/long_tail_evaluation.md) for frozen
+training-popularity groups, resumable Beauty evaluation with beam 10/20/50,
+teacher-forced SID diagnostics, and offline report regeneration in the `grid`
+conda environment. Default configuration: `configs/analysis/beauty_long_tail.yaml`.
+
+Second experiment: [second-layer search attribution guide](docs/second_layer_analysis.md)
+adds training support, potential target-window counts, frequency baselines and
+native-score pruning attribution while reusing the first experiment's frozen artifacts.
+Configuration: `configs/analysis/beauty_second_layer.yaml`.
+
+Beauty/Toys × RQ-kmeans/RQ-VAE 的 seed42 交叉验证使用
+[`scripts/run_rq_cross_validation.sh`](scripts/run_rq_cross_validation.sh)，包含 Beauty + RQ-kmeans 的 SID 与 GR 重训。
+SID 与 GR 均使用GPU0/1/2，最多三组并行、第四组排队，每组独占一张卡；SID保留默认训练步数和每卡batch。配置、恢复和离线重算见 [`docs/rq_cross_validation.md`](docs/rq_cross_validation.md)。

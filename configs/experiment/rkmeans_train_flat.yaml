@@ -2,8 +2,8 @@
 data_dir: ???
 embedding_path: ???
 embedding_dim: ???
-num_hierarchies: ???
-codebook_width: ??? 
+num_hierarchies: 3
+codebook_width: 256
 
 task_name: train
 id: ${now:%Y-%m-%d}/${now:%H-%M-%S}
@@ -174,9 +174,9 @@ callbacks:
     mode: min
     auto_insert_metric_name: false
     save_weights_only: false
-    every_n_train_steps: null
+    every_n_train_steps: ${trainer.max_steps}
     train_time_interval: null
-    every_n_epochs: 1
+    every_n_epochs: null
     save_on_train_epoch_end: null
   early_stopping: null
   model_summary:
@@ -192,10 +192,11 @@ trainer:
   _target_: lightning.pytorch.trainer.Trainer
   default_root_dir: ${paths.output_dir}
   min_steps: 1
-  max_steps: -1
-  max_epochs: 20
+  # GRID Section 4: 1k training steps per residual layer.
+  max_steps: ${math_eval:1000*${num_hierarchies}}
+  max_epochs: -1
   accelerator: gpu
-  devices: -1
+  devices: 8
   num_nodes: 1
   precision: bf16-mixed
   log_every_n_steps: 10

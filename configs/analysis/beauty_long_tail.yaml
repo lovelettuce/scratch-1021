@@ -1,0 +1,15 @@
+# Paths are relative to the project root, never the archived Hydra working directory.
+data_dir: data/amazon_data/beauty
+training_run_dir: outputs/1022-reproduction-rqkmeans/beauty_tiger_a100_1gpu
+checkpoint: outputs/1022-reproduction-rqkmeans/beauty_tiger_a100_1gpu/checkpoints/checkpoint_epoch=067_step=002992.ckpt
+semantic_id_path: outputs/1022-reproduction-rqkmeans/beauty_rkmeans_inference/pickle/merged_predictions_tensor.pt
+output_root: outputs/analysis/beauty_long_tail
+device: cuda:0
+batch_size: 8
+beam_widths: [10, 20, 50]
+k_values: [5, 10]
+seed: 42
+bootstrap_replicates: 2000
+max_samples: null
+# Set to a fresh name to choose an explicit run directory; otherwise timestamped.
+run_id: null

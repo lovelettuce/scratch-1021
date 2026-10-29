@@ -461,9 +461,14 @@ class ResidualQuantization(LightningModule):
         if hasattr(self, "train_loss"):
             self.train_loss.reset()
 
-        self.current_layer = 0
-        for layer in self.quantization_layer_list:
+        restored = getattr(self, "_restored_quantization_state", None)
+        if restored is None:
+            self.current_layer = 0
+        for idx, layer in enumerate(self.quantization_layer_list):
             layer.on_train_start()
+            if restored is not None:
+                layer.init_buffer = restored["buffers"][idx].to(self.device)
+                layer.is_initial_step = restored["initial_steps"][idx]
 
         if self.train_layer_wise:
             total_steps = self.trainer.estimated_stepping_batches
@@ -476,7 +481,8 @@ class ResidualQuantization(LightningModule):
                 eff_n_layers = self.n_layers
             else:
                 eff_n_layers = self.n_layers + 1
-                self.current_layer = -1
+                if restored is None:
+                    self.current_layer = -1
             self.steps_per_layer = max(1, total_steps // eff_n_layers)
             self.log_if_true(
                 f"Training layers one-at-a-time, each for {self.steps_per_layer} steps."
@@ -608,8 +614,13 @@ class ResidualQuantization(LightningModule):
         (
             cluster_ids,
             all_residuals,
-            loss,
+            quantization_loss,
+            reconstruction_loss,
         ) = self.model_step(batch)
+        loss = (
+            self.quantization_loss_weight * quantization_loss
+            + self.reconstruction_loss_weight * reconstruction_loss
+        )
         loss_to_aggregate(loss)
 
         (
@@ -774,6 +785,10 @@ class ResidualQuantization(LightningModule):
         self.current_layer = checkpoint["current_layer"]
         for idx, layer in enumerate(self.quantization_layer_list):
             layer.is_initialized = checkpoint["layers_initialized"][idx]
+        self._restored_quantization_state = {
+            "buffers": checkpoint.get("initialization_buffers", [torch.tensor([]) for _ in self.quantization_layer_list]),
+            "initial_steps": checkpoint.get("layers_initial_step", [False] * self.n_layers),
+        }
         return super().on_load_checkpoint(checkpoint)
 
     def on_save_checkpoint(self, checkpoint):
@@ -787,6 +802,12 @@ class ResidualQuantization(LightningModule):
         checkpoint["layers_initialized"] = [
             layer.is_initialized for layer in self.quantization_layer_list
         ]
+        # Save only unfinished initialization buffers, not the full training embedding cache.
+        checkpoint["initialization_buffers"] = [
+            layer.init_buffer.detach().cpu() if not layer.is_initialized else torch.tensor([])
+            for layer in self.quantization_layer_list
+        ]
+        checkpoint["layers_initial_step"] = [layer.is_initial_step for layer in self.quantization_layer_list]
         # We do not save the input embedding cache as this can be very large
         return super().on_save_checkpoint(checkpoint)
 

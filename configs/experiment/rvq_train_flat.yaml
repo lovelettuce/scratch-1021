@@ -2,8 +2,8 @@
 data_dir: ???
 embedding_path: ???
 embedding_dim: ???
-num_hierarchies: ???
-codebook_width: ??? 
+num_hierarchies: 3
+codebook_width: 256
 
 task_name: train
 id: ${now:%Y-%m-%d}/${now:%H-%M-%S}
@@ -199,10 +199,11 @@ trainer:
   _target_: lightning.pytorch.trainer.Trainer
   default_root_dir: ${paths.output_dir}
   min_steps: 1
-  max_steps: 3000
-  max_epochs: 10
+  # GRID Section 4: 1k training steps per residual layer.
+  max_steps: ${math_eval:1000*${num_hierarchies}}
+  max_epochs: -1
   accelerator: gpu
-  devices: -1
+  devices: 8
   num_nodes: 1
   precision: bf16-mixed
   log_every_n_steps: 10
@@ -229,7 +230,10 @@ extras:
   print_config: true
 optim:
   optimizer:
+    _target_: torch.optim.Adam
+    _partial_: true
     lr: 0.001
+  scheduler: null
 eval:
   evaluator:
     placeholder_token_buffer: 0

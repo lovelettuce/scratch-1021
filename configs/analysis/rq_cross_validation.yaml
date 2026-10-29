@@ -1,0 +1,60 @@
+# Three concurrent jobs on GPU0/1/2; sharing with external jobs explicitly authorized.
+seed: 42
+python: /home/yangyujie/data/miniconda3/envs/grid/bin/python
+output_root: outputs/rq_cross_validation/seed42
+reference:
+  training_run_dir: outputs/1022-reproduction-rqkmeans/beauty_tiger_a100_1gpu
+  checkpoint: outputs/1022-reproduction-rqkmeans/beauty_tiger_a100_1gpu/checkpoints/checkpoint_epoch=067_step=002992.ckpt
+  semantic_id_path: outputs/1022-reproduction-rqkmeans/beauty_rkmeans_inference/pickle/merged_predictions_tensor.pt
+  long_tail: outputs/analysis/beauty_long_tail/runs/20261028-174405-087020
+  second_layer: outputs/analysis/beauty_second_layer/runs/20261028-190106-275225
+embedding_snapshot: /home/yangyujie/.cache/huggingface/hub/models--google--flan-t5-xl/snapshots/7d6315df2c2fb742f0f5b556879d730926ca9001
+beauty_embedding: logs/inference/runs/2026-10-22/09-26-23/pickle/merged_predictions_tensor.pt
+embedding_dim: 2048
+semantic_levels: 3
+codebook_width: 256
+minimum_free_disk_gib: 20
+minimum_free_gpu_gib: 12
+master_ports:
+- 29540
+- 29541
+- 29542
+- 29543
+datasets:
+  beauty: data/amazon_data/beauty
+  toys: data/amazon_data/toys
+experiments:
+  beauty_rqkmeans:
+    dataset: beauty
+    tokenizer: rqkmeans
+  beauty_rqvae:
+    dataset: beauty
+    tokenizer: rqvae
+  toys_rqvae:
+    dataset: toys
+    tokenizer: rqvae
+  toys_rqkmeans:
+    dataset: toys
+    tokenizer: rqkmeans
+tokenizer:
+  use_recipe_defaults: true
+  devices_per_experiment: 1
+recommender:
+  max_epochs: 150
+  accumulation_steps: 16
+  precision: bf16-mixed
+analysis:
+  batch_size: 8
+  beam_widths:
+  - 10
+  - 20
+  - 50
+  k_values:
+  - 5
+  - 10
+  bootstrap_replicates: 2000
+  smoke_samples: 16
+study_version: 2
+sid_gpus: 0,1,2
+gpus: 0,1,2
+allow_gpu_sharing: true
