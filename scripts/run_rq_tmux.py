@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Three persistent tmux workers for a prepared RQ cross-validation study."""
+"""Four persistent tmux workers for a prepared RQ cross-validation study."""
 from __future__ import annotations
 
 import argparse
@@ -37,16 +37,19 @@ def adopt_preparation(study, coordinator, inference):
     def commit_existing():
         result = validate_embedding(folder/'pickle/merged_predictions_tensor.pt',
                     read_json(study/'shared/toys/manifest.json')['catalog_items'], cfg['embedding_dim'])
+        result.update(model_id=cfg.get('embedding_model_id', 'google/flan-t5-xl'), embedding_dim=cfg['embedding_dim'])
         write_json(study/'shared/toys/embedding.json', result)
         return result, [folder/'pickle/merged_predictions_tensor.pt', receipt, study/'shared/toys/embedding.json']
-    stage(study, 'toys_embeddings', {'study': manifest['identity']}, commit_existing)
+    stage(study, 'toys_embeddings', {'study': manifest['identity'],
+          'model_id': cfg.get('embedding_model_id', 'google/flan-t5-xl'),
+          'dimension': cfg['embedding_dim']}, commit_existing)
     if process_running(coordinator):
         args = Path(f'/proc/{coordinator}/cmdline').read_bytes().split(b'\0')
         state = Path(f'/proc/{coordinator}/stat').read_text().split(') ', 1)[1][0]
         if b'src.experiments.rq_cross_validation' not in args or state != 'T':
             raise RuntimeError('Only the explicitly frozen original coordinator can be replaced')
         os.kill(coordinator, signal.SIGKILL)
-    manifest.update(status='running', execution_backend='three_tmux_workers',
+    manifest.update(status='running', execution_backend='four_tmux_workers',
                     tmux_controller='scripts/run_rq_tmux.py', tmux_started_at=now())
     write_json(study/'study_manifest.json', manifest)
     write_json(study/'tmux/shared_ready.json', {'finished_at': now(), 'embedding_sha256': read_json(study/'shared/toys/embedding.json')['sha256']})
@@ -111,14 +114,14 @@ def worker(study, gpu, coordinator=None, inference=None):
     from src.experiments.rq_cross_validation.common import read_json, write_json, lock, now
     manifest = read_json(study/'study_manifest.json')
     cfg = manifest['config']
-    assignments = {'0': ['beauty_rqkmeans', 'toys_rqkmeans'], '1': ['beauty_rqvae'], '2': ['toys_rqvae']}
+    assignments = {'4': ['beauty_rqkmeans'], '5': ['beauty_rqvae'], '6': ['toys_rqvae'], '7': ['toys_rqkmeans']}
     state = study/'tmux'/f'gpu{gpu}.state.json'
     def status(value, **extra):
         write_json(state, {'gpu': gpu, 'status': value, 'updated_at': now(), 'pid': os.getpid(), **extra})
     with lock(study/'tmux'/f'.gpu{gpu}.lock'):
         try:
             status('waiting_shared_inputs')
-            if gpu == '0' and coordinator is not None:
+            if gpu == '4' and coordinator is not None:
                 adopt_preparation(study, coordinator, inference)
             wait_for(study, 'shared_ready.json', peers=True)
             for cell in assignments[gpu]:
@@ -126,15 +129,15 @@ def worker(study, gpu, coordinator=None, inference=None):
                 execute_cell(study, cfg, gpu, cell, 'tokenizer')
             write_json(study/'tmux'/f'sid_gpu{gpu}.done.json', {'finished_at': now()})
             status('waiting_sid_barrier')
-            for peer in ('0', '1', '2'):
+            for peer in ('4', '5', '6', '7'):
                 wait_for(study, f'sid_gpu{peer}.done.json', peers=True)
             for cell in assignments[gpu]:
                 status('running', cell=cell, phase='recommender_and_analysis')
                 execute_cell(study, cfg, gpu, cell, 'all')
             write_json(study/'tmux'/f'all_gpu{gpu}.done.json', {'finished_at': now()})
             status('complete')
-            if gpu == '0':
-                for peer in ('0', '1', '2'):
+            if gpu == '4':
+                for peer in ('4', '5', '6', '7'):
                     wait_for(study, f'all_gpu{peer}.done.json', peers=True)
                 from src.experiments.rq_cross_validation.report import report
                 report(study)
@@ -148,13 +151,13 @@ def worker(study, gpu, coordinator=None, inference=None):
 
 def start(study, coordinator, inference):
     from src.experiments.rq_cross_validation.common import write_json, digest, now
-    names = {'0': 'rqcv-beauty-rqkmeans-gpu0', '1': 'rqcv-beauty-rqvae-gpu1', '2': 'rqcv-toys-rqvae-gpu2'}
+    names = {'4': 'rqcv-beauty-rqkmeans-gpu4', '5': 'rqcv-beauty-rqvae-gpu5', '6': 'rqcv-toys-rqvae-gpu6', '7': 'rqcv-toys-rqkmeans-gpu7'}
     for name in names.values():
         if subprocess.run(['tmux', 'has-session', '-t', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
             raise RuntimeError(f'Session already exists: {name}')
     for gpu, name in names.items():
         command = [sys.executable, '-u', str(Path(__file__).resolve()), 'worker', '--study', str(study), '--gpu', gpu]
-        if gpu == '0' and coordinator is not None:
+        if gpu == '4' and coordinator is not None:
             command += ['--coordinator', str(coordinator), '--inference', str(inference)]
         subprocess.run(['tmux', 'new-session', '-d', '-s', name, '-c', str(ROOT), shlex.join(command)], check=True)
         subprocess.run(['tmux', 'set-option', '-w', '-t', name, 'remain-on-exit', 'on'], check=True)
@@ -168,7 +171,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('command', choices=['start', 'worker'])
     p.add_argument('--study', required=True)
-    p.add_argument('--gpu', choices=['0', '1', '2'])
+    p.add_argument('--gpu', choices=['4', '5', '6', '7'])
     p.add_argument('--coordinator', type=int)
     p.add_argument('--inference', type=int)
     args = p.parse_args()

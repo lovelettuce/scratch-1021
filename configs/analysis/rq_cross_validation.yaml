@@ -1,13 +1,7 @@
-# Three concurrent jobs on GPU0/1/2; sharing with external jobs explicitly authorized.
+# Four concurrent experiments, one per physical GPU 4/5/6/7.
 seed: 42
-python: /home/yangyujie/data/miniconda3/envs/grid/bin/python
+python: /home/lettuce/miniconda3/envs/grid/bin/python
 output_root: outputs/rq_cross_validation/seed42
-reference:
-  training_run_dir: outputs/1022-reproduction-rqkmeans/beauty_tiger_a100_1gpu
-  checkpoint: outputs/1022-reproduction-rqkmeans/beauty_tiger_a100_1gpu/checkpoints/checkpoint_epoch=067_step=002992.ckpt
-  semantic_id_path: outputs/1022-reproduction-rqkmeans/beauty_rkmeans_inference/pickle/merged_predictions_tensor.pt
-  long_tail: outputs/analysis/beauty_long_tail/runs/20261028-174405-087020
-  second_layer: outputs/analysis/beauty_second_layer/runs/20261028-190106-275225
 embedding_snapshot: /home/yangyujie/.cache/huggingface/hub/models--google--flan-t5-xl/snapshots/7d6315df2c2fb742f0f5b556879d730926ca9001
 beauty_embedding: logs/inference/runs/2026-10-22/09-26-23/pickle/merged_predictions_tensor.pt
 embedding_dim: 2048
@@ -40,6 +34,7 @@ tokenizer:
   use_recipe_defaults: true
   devices_per_experiment: 1
 recommender:
+  config: configs/analysis/rq_recommender.yaml
   max_epochs: 150
   accumulation_steps: 16
   precision: bf16-mixed
@@ -55,6 +50,21 @@ analysis:
   bootstrap_replicates: 2000
   smoke_samples: 16
 study_version: 2
-sid_gpus: 0,1,2
-gpus: 0,1,2
+sid_gpus: 4,5,6,7
+gpus: 4,5,6,7
 allow_gpu_sharing: true
+
+# XL preserves the legacy source and reusable Beauty vectors above.
+embedding_model: flan-t5-xl
+embedding_models:
+  flan-t5-xl:
+    model_id: google/flan-t5-xl
+    source: ${embedding_snapshot}
+    embedding_dim: 2048
+    beauty_embedding: ${beauty_embedding}
+  flan-t5-base:
+    model_id: google/flan-t5-base
+    # Already downloaded locally; a repository ID also resolves the HF cache offline.
+    source: cache
+    embedding_dim: 768
+    beauty_embedding: null

@@ -70,18 +70,10 @@ def prepare_raw(cfg, study):
                 raise ValueError('Frozen study groups have changed')
             continue
         items, summary = dataset_summary(folder)
-        if dataset == 'beauty':
-            source = read_json(Path(cfg['reference']['long_tail']) / 'manifest.json')
-            ref_dir = Path(source['dataset_dir'])
-            if not ref_dir.exists():
-                ref_dir = Path(cfg['reference']['long_tail']).parent.parent / 'datasets' / ref_dir.name
-            reference = pd.read_csv(ref_dir / 'items.csv', keep_default_na=False)
-            pd.testing.assert_frame_equal(items, reference, check_dtype=False)
         write_csv(out / 'items.csv', items)
         write_json(out / 'manifest.json', {**summary, 'items_sha256': digest(out / 'items.csv'),
                    'grouping': 'count-20-30-50-ties-hot-v1', 'dataset': dataset})
-        if dataset == 'beauty':
-            write_json(out / 'embedding.json', validate_embedding(cfg['beauty_embedding'], len(items), cfg['embedding_dim']))
+
 
 
 def validate_sid(path, n, width=256):

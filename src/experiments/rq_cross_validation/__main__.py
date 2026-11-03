@@ -16,7 +16,7 @@ import time
 from zoneinfo import ZoneInfo
 
 from .common import (EXPERIMENTS, ROOT, canonical_hash, environment, input_identity,
-                     load_config, lock, now, read_json, save_yaml, source_hashes, stage, write_json)
+                     load_config, lock, now, read_json, validate_resume_model, save_yaml, source_hashes, stage, write_json)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -77,23 +77,31 @@ def gpu_preflight(cfg, jobs):
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-def shared_embeddings(cfg, study, job):
+def shared_embeddings(cfg, study, job, dataset='toys'):
     from .configuration import embedding_config
     from .pipeline import run_model
     from .prepare import validate_embedding
-    folder = study / 'shared/toys/embedding_inference'
-    n = read_json(study / 'shared/toys/manifest.json')['catalog_items']
+    shared = study / 'shared' / dataset
+    folder = shared / 'embedding_inference'
+    n = read_json(shared / 'manifest.json')['catalog_items']
     def execute():
-        # This phase finishes once before either Toys tokenizer is launched.
-        _, receipt = run_model(cfg, folder, embedding_config(cfg, folder), 'inference', False)
-        path = folder / 'pickle/merged_predictions_tensor.pt'
+        reuse = cfg.get('beauty_embedding') if dataset == 'beauty' else None
+        if reuse:
+            path = Path(reuse)
+            artifacts = [path]
+        else:
+            _, receipt = run_model(cfg, folder, embedding_config(cfg, folder, dataset), 'inference', False)
+            path = folder / 'pickle/merged_predictions_tensor.pt'
+            artifacts = [path, receipt]
         result = validate_embedding(path, n, cfg['embedding_dim'])
-        write_json(study / 'shared/toys/embedding.json', result)
-        return result, [path, receipt, study / 'shared/toys/embedding.json']
+        result.update(model_id=cfg['embedding_model_id'], embedding_dim=cfg['embedding_dim'])
+        write_json(shared / 'embedding.json', result)
+        return result, [*artifacts, shared / 'embedding.json']
     previous = os.environ.copy()
     try:
         os.environ.update(isolated_env([job['gpu']], job['master_port']))
-        stage(study, 'toys_embeddings', {'study': read_json(study / 'study_manifest.json')['identity']}, execute)
+        stage(study, f'{dataset}_embeddings', {'study': read_json(study / 'study_manifest.json')['identity'],
+              'model_id': cfg['embedding_model_id'], 'dimension': cfg['embedding_dim']}, execute)
     finally:
         os.environ.clear()
         os.environ.update(previous)
@@ -163,6 +171,7 @@ def launch(cfg, study, jobs, selected_stage):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', default='configs/analysis/rq_cross_validation.yaml')
+    parser.add_argument('--embedding-model', choices=['flan-t5-xl', 'flan-t5-base'], default=None)
     parser.add_argument('--gpus', help='GR/analysis GPU pool; each active experiment owns one GPU; default from config')
     parser.add_argument('--sid-gpus', help='SID GPU pool; queued experiments wait for their assigned GPU; default from config')
     parser.add_argument('--experiment', choices=['all', *EXPERIMENTS], default='all')
@@ -171,14 +180,19 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, args.embedding_model)
+    from .embedding import inspect_model
+    model_status = inspect_model(cfg)
     experiments = list(EXPERIMENTS) if args.experiment == 'all' else [args.experiment]
+    datasets = list(dict.fromkeys(cfg['experiments'][cell]['dataset'] for cell in experiments))
     jobs = schedule(cfg, experiments, args.gpus or cfg['gpus'])
     sid_jobs = sid_schedule(cfg, experiments, args.sid_gpus or cfg['sid_gpus']) if args.stage in ('all', 'tokenizer') else []
     if args.dry_run:
         print(json.dumps({'jobs': jobs, 'sid_jobs': sid_jobs, 'max_parallel_gr': len(set(j['gpu'] for j in jobs)), 'max_parallel_sid': len(set(j['gpu'] for j in sid_jobs)), 'stage': args.stage,
-                          'steps': ['raw inputs/groups', 'shared Toys embedding', 'tokenizer train', 'SID export',
+                          'steps': ['raw inputs/groups', 'shared dataset embeddings', 'tokenizer train', 'SID export',
                                     'TIGER train', 'long-tail smoke/full', 'second-layer smoke/full', 'four-cell report'],
+                          'embedding': model_status,
+                          'generate_embeddings': [d for d in datasets if d != 'beauty' or not cfg.get('beauty_embedding')],
                           'config': cfg}, ensure_ascii=False, indent=2))
         return
     if args.stage == 'summary':
@@ -187,10 +201,19 @@ def main():
         from .report import report
         print(report(Path(args.resume)))
         return
+    if args.resume:
+        validate_resume_model(cfg, read_json(Path(args.resume).resolve() / 'study_manifest.json'))
+    model_status = inspect_model(cfg, required=True)
+    cfg['embedding_snapshot'] = model_status['snapshot']
     if Path(sys.executable).resolve() != Path(cfg['python']).resolve():
         raise ValueError('Run this study with the configured grid Python')
     if shutil.disk_usage(cfg['datasets']['beauty']).free < cfg['minimum_free_disk_gib'] * 1024**3:
         raise RuntimeError('Insufficient free disk space')
+    from .configuration import recommender_config
+    gr_template = recommender_config(cfg, experiments[0], Path('/tmp/rq-plan'), 'GENERATED_SID_PATH')
+    # Validate all interpolations before creating a study or starting GPU jobs.
+    from omegaconf import OmegaConf
+    OmegaConf.to_container(gr_template, resolve=True)
     inputs = input_identity(cfg)
     code = source_hashes()
     identity = canonical_hash({'config': cfg, 'inputs': inputs, 'code': code})
@@ -207,7 +230,7 @@ def main():
                     'identity': identity, 'environment': environment(), 'status': 'created', 'started_at': now()}
         write_json(study / 'study_manifest.json', manifest)
         save_yaml(study / 'config.yaml', cfg)
-        write_json(study / 'reference/historical_beauty_rqkmeans.json', {**cfg['reference'], 'role': 'historical_config_and_groups_only'})
+        save_yaml(study / 'recommender_template.yaml', gr_template)
     (study / 'logs').mkdir(exist_ok=True)
     handler = logging.FileHandler(study / 'logs/study.log')
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
@@ -231,8 +254,8 @@ def main():
                 resources.enter_context(lock(Path(cfg['output_root']) / '.locks' / f'port-{port}.lock'))
             manifest['devices'] = gpu_preflight(cfg, allocations)
             write_json(study / 'study_manifest.json', manifest)
-            if any(cfg['experiments'][cell]['dataset'] == 'toys' for cell in experiments):
-                shared_embeddings(cfg, study, jobs[0])
+            for dataset in datasets:
+                shared_embeddings(cfg, study, jobs[0], dataset)
             if args.stage != 'prepare':
                 manifest['status'] = 'running'
                 write_json(study / 'study_manifest.json', manifest)
@@ -259,7 +282,6 @@ def main():
 def prepare_raw_action(cfg, study, prepare):
     prepare(cfg, study)
     artifacts = [study / 'shared' / dataset / name for dataset in cfg['datasets'] for name in ('manifest.json', 'items.csv')]
-    artifacts += [study / 'shared/beauty/embedding.json']
     return {'datasets': list(cfg['datasets'])}, artifacts
 
 

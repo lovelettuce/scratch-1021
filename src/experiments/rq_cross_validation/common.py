@@ -27,12 +27,16 @@ def absolute(value):
     return str((ROOT / path).resolve() if not path.is_absolute() else path.resolve())
 
 
-def load_config(path):
+def load_config(path, embedding_model=None):
     cfg = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
-    for key in ('python', 'output_root', 'embedding_snapshot', 'beauty_embedding'):
+    from .embedding import select_model
+    select_model(cfg, embedding_model)
+    for key in ('python', 'output_root'):
         cfg[key] = absolute(cfg[key])
     cfg['datasets'] = {k: absolute(v) for k, v in cfg['datasets'].items()}
-    cfg['reference'] = {k: absolute(v) for k, v in cfg['reference'].items()}
+    cfg['recommender']['config'] = absolute(cfg['recommender'].get('config', 'configs/analysis/rq_recommender.yaml'))
+    # Historical paths in old configurations are inert; only new-study inputs are used.
+    cfg.pop('reference', None)
     cfg.setdefault('allow_gpu_sharing', False)
     if not isinstance(cfg['allow_gpu_sharing'], bool):
         raise ValueError('allow_gpu_sharing must be boolean')
@@ -40,8 +44,8 @@ def load_config(path):
         raise ValueError('This study requires version 2, seed 42 and four newly trained cells')
     if cfg.get('tokenizer') != {'use_recipe_defaults': True, 'devices_per_experiment': 1}:
         raise ValueError('SID training uses recipe defaults with one GPU per experiment; remove old budget/batch overrides')
-    if (cfg['semantic_levels'], cfg['codebook_width'], cfg['embedding_dim']) != (3, 256, 2048):
-        raise ValueError('Expected the registered 3 × 256 semantic tokenizer and 2048-dimensional input')
+    if (cfg['semantic_levels'], cfg['codebook_width']) != (3, 256):
+        raise ValueError('Expected the registered 3 × 256 semantic tokenizer')
     if cfg['analysis']['batch_size'] != 8 or cfg['analysis']['beam_widths'] != [10, 20, 50]:
         raise ValueError('Replay requires batch 8 and beams 10/20/50')
     return cfg
@@ -54,32 +58,20 @@ def source_hashes():
 
 
 def input_identity(cfg):
-    ref = cfg['reference']
-    for name in ('long_tail', 'second_layer'):
-        m = read_json(Path(ref[name]) / 'manifest.json')
-        if m['status'] != 'complete' or not m['is_full_evaluation']:
-            raise ValueError(f'Incomplete reference: {name}')
     identities = {'data': {name: {split: file_inventory(Path(folder) / split)
                     for split in ('items', 'training', 'evaluation', 'testing')}
                   for name, folder in cfg['datasets'].items()},
-                  'beauty_embedding': digest(cfg['beauty_embedding']),
-                  'reference': {key: digest(Path(value) / 'manifest.json') if key in ('long_tail', 'second_layer')
-                    else digest(Path(value) / '.hydra/config.yaml') if key == 'training_run_dir' else digest(value)
-                    for key, value in ref.items()}}
-    source = read_json(Path(ref['long_tail']) / 'manifest.json')
-    for key, value in [('checkpoint_sha256', identities['reference']['checkpoint']),
-                       ('sid_sha256', identities['reference']['semantic_id_path']),
-                       ('training_config_sha256', identities['reference']['training_run_dir'])]:
-        if source['inputs'][key] != value:
-            raise ValueError(f'Reference inputs disagree: {key}')
-    if source['inputs']['training'] != identities['data']['beauty']['training'] or source['inputs']['testing'] != identities['data']['beauty']['testing']:
-        raise ValueError('Beauty raw data differs from reference')
+                  'beauty_embedding': digest(cfg['beauty_embedding']) if cfg['beauty_embedding'] else None,
+                  'recommender_config': digest(cfg['recommender']['config'])}
     # Pin model weights and tokenization assets, including symlink targets in the HF cache.
     snapshot = Path(cfg['embedding_snapshot'])
-    assets = {str(p.relative_to(snapshot)): digest(p) for p in sorted(snapshot.rglob('*')) if p.is_file()}
+    assets = {str(p.relative_to(snapshot)): digest(p) for p in sorted(snapshot.rglob('*'))
+              if p.is_file() and '.cache' not in p.relative_to(snapshot).parts
+              and (p.suffix in ('.json', '.model', '.safetensors', '.bin'))}
     if not assets or not any('model' in p or 'pytorch_model' in p for p in assets):
         raise ValueError('Incomplete local FLAN-T5 snapshot')
     identities['embedding_assets'] = assets
+    identities['embedding_model'] = {'model_id': cfg['embedding_model_id'], 'dimension': cfg['embedding_dim']}
     return identities
 
 
@@ -126,3 +118,10 @@ def stage(directory, name, identity, action):
 
 def save_yaml(path, value):
     atomic_write(path, lambda p: OmegaConf.save(OmegaConf.create(value), p))
+
+
+def validate_resume_model(cfg, manifest):
+    previous = manifest['config']
+    old = (previous.get('embedding_model_id', 'google/flan-t5-xl'), previous['embedding_dim'])
+    if old != (cfg['embedding_model_id'], cfg['embedding_dim']):
+        raise ValueError('Resume refused: embedding model differs; create a new study')

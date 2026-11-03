@@ -7,7 +7,7 @@ conda run --no-capture-output -n grid python -m src.analysis.second_layer run \
   --config configs/analysis/beauty_second_layer.yaml
 ```
 
-若系统默认 conda 来自其他安装，请使用 `/home/yangyujie/data/miniconda3/bin/conda`，或直接使用该安装下 `envs/grid/bin/python`。
+若系统默认 conda 来自其他安装，请使用 `/home/lettuce/miniconda3/bin/conda`，或直接使用该安装下 `envs/grid/bin/python`。
 
 ## 阶段、验证和恢复
 

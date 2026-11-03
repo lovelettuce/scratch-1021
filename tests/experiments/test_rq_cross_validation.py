@@ -36,6 +36,18 @@ def test_schedule_requires_distinct_gpus_and_ports(config):
     assert env['HF_HUB_OFFLINE'] == '1'
 
 
+def test_default_schedule_runs_four_jobs_on_gpus_4_to_7(config):
+    cells = list(config['experiments'])
+    for pool in ('gpus', 'sid_gpus'):
+        assert config[pool] == '4,5,6,7'
+    for jobs in (schedule(config, cells, config['gpus']),
+                 sid_schedule(config, cells, config['sid_gpus'])):
+        assert [j['cell'] for j in jobs] == cells
+        assert [j['gpu'] for j in jobs] == ['4', '5', '6', '7']
+        assert len({j['master_port'] for j in jobs}) == 4
+    assert isolated_env(['7'])['CUDA_VISIBLE_DEVICES'] == '7'
+
+
 def test_sid_schedule_queues_four_jobs_on_three_gpus(config):
     jobs = sid_schedule(config, list(config['experiments']), '0,1,2')
     assert len(jobs) == 4
@@ -44,11 +56,14 @@ def test_sid_schedule_queues_four_jobs_on_three_gpus(config):
     assert all(j['gpu'] != '3' for j in jobs)
 
 
-def test_recipes_keep_archived_tiger_parameters(config, tmp_path):
-    reference = OmegaConf.load(Path(config['reference']['training_run_dir']) / '.hydra/config.yaml')
-    expected = OmegaConf.to_container(reference, resolve=False)
+def test_recipes_keep_standalone_tiger_parameters(config, tmp_path):
+    assert 'reference' not in config
+    template = base_config('tiger_train_flat')
+    with open_dict(template):
+        template.merge_with(OmegaConf.load(config['recommender']['config']))
+    expected = OmegaConf.to_container(template, resolve=False)
     for cell in config['experiments']:
-        rec = recommender_config(config, cell, tmp_path, config['reference']['semantic_id_path'])
+        rec = recommender_config(config, cell, tmp_path, '/tmp/new-sids.pt')
         assert rec.trainer.max_epochs == 150
         assert rec.trainer.accumulate_grad_batches == 16
         assert rec.callbacks.model_checkpoint.monitor == 'val/recall@5'
@@ -68,8 +83,10 @@ def test_recipes_keep_archived_tiger_parameters(config, tmp_path):
         defaults = base_config('rkmeans_train_flat' if cell.endswith('rqkmeans') else 'rqvae_train_flat')
         assert token.trainer.devices == 1
         assert defaults.trainer.devices == 8
-        assert token.trainer.max_steps == defaults.trainer.max_steps == (3000 if cell.endswith('rqkmeans') else 15000)
+        assert token.trainer.max_steps == defaults.trainer.max_steps == (3000 if cell.endswith('rqkmeans') else 5000)
         assert token.trainer.max_epochs == defaults.trainer.max_epochs == -1
+        if cell.endswith('rqvae'):
+            assert token.trainer.check_val_every_n_epoch == 10
         for field in ('precision', 'strategy', 'accumulate_grad_batches', 'sync_batchnorm', 'check_val_every_n_epoch'):
             assert token.trainer[field] == defaults.trainer[field]
         for field in ('batch_size_per_device', 'num_workers', 'assign_all_files_per_worker', 'drop_last', 'should_shuffle_rows'):
@@ -331,7 +348,7 @@ def test_new_study_does_not_fill_beauty_cell_from_historical_reference(config, t
     from src.analysis.long_tail.io import write_json
     from src.experiments.rq_cross_validation import report as module
     write_json(tmp_path / 'study_manifest.json', {'config': config})
-    write_json(tmp_path / 'reference/beauty_rqkmeans.json', config['reference'])
+    write_json(tmp_path / 'reference/beauty_rqkmeans.json', {'checkpoint': '/absent/historical.ckpt'})
     def forbidden(*args, **kwargs):
         raise AssertionError('Historical checkpoint must not populate the trained Beauty cell')
     monkeypatch.setattr(module, 'cache_cell', forbidden)
@@ -347,6 +364,27 @@ def test_new_study_rejects_comparison_inputs_without_trained_role(config, tmp_pa
         'cell': 'beauty_rqkmeans', 'cell_role': 'historical_reference', 'artifacts': []})
     with pytest.raises(ValueError, match='Historical Beauty checkpoint'):
         report(tmp_path)
+
+
+@pytest.mark.parametrize('training_stage', ['tokenizer', 'recommender'])
+def test_default_gpu_pool_starts_all_four_before_waiting(config, tmp_path, monkeypatch, training_stage):
+    import src.experiments.rq_cross_validation.__main__ as coordinator
+    started = []
+    class Process:
+        def poll(self):
+            assert len(started) == 4
+            return 0
+    class Handle:
+        def close(self):
+            pass
+    def start(cfg, study, job, stage):
+        started.append(job['gpu'])
+        return Process(), Handle()
+    monkeypatch.setattr(coordinator, 'start_job', start)
+    jobs = (coordinator.sid_schedule if training_stage == 'tokenizer' else coordinator.schedule)(
+        config, list(config['experiments']), config['sid_gpus' if training_stage == 'tokenizer' else 'gpus'])
+    coordinator.launch(config, tmp_path, jobs, training_stage)
+    assert started == ['4', '5', '6', '7']
 
 
 @pytest.mark.parametrize('training_stage', ['tokenizer', 'recommender'])

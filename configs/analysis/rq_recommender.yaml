@@ -1,0 +1,51 @@
+# Standalone study overrides for experiment=tiger_train_flat.
+# All four cells use the same architecture and training protocol.
+num_hierarchies: 4
+sequence_length: 120
+model:
+  num_embeddings_per_hierarchy: 256
+  huggingface_model:
+    config:
+      d_model: 128
+      d_ff: 1024
+      d_kv: 64
+      num_heads: 6
+      num_layers: 4
+      dropout_rate: 0.15
+  decoder:
+    config:
+      num_layers: 4
+      dropout_rate: 0.15
+  weight_tying: true
+  mlp_layers: 2
+optim:
+  optimizer:
+    lr: 0.001
+    weight_decay: 0.0001
+  scheduler: null
+trainer:
+  accelerator: gpu
+  devices: 1
+  max_epochs: 150
+  max_steps: -1
+  precision: bf16-mixed
+  accumulate_grad_batches: 16
+  val_check_interval: null
+  check_val_every_n_epoch: 1
+callbacks:
+  model_checkpoint:
+    monitor: val/recall@5
+    mode: max
+    save_last: true
+  early_stopping:
+    monitor: val/recall@5
+    mode: max
+    patience: 10
+data_loading:
+  train_dataloader_config:
+    dataloader:
+      batch_size_per_device: 32
+      num_workers: 8
+      assign_all_files_per_worker: false
+      collate_fn:
+        max_batch_size: 512

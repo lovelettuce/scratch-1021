@@ -139,7 +139,7 @@ def main():
     parser.add_argument('kind', choices=['train', 'inference', 'probe'])
     parser.add_argument('--config')
     parser.add_argument('--resume', action='store_true')
-    parser.add_argument('--gpus', default='0,1,2')
+    parser.add_argument('--gpus', default='4,5,6,7')
     parser.add_argument('--minimum-gib', type=float, default=12)
     parser.add_argument('--allow-gpu-sharing', action='store_true')
     args = parser.parse_args()

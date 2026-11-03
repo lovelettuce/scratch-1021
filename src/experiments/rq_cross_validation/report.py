@@ -268,7 +268,7 @@ def report(study):
 
 ## 实验条件与覆盖
 
-seed=42；TIGER 沿用 Beauty 基准配置，最多150 epoch、验证 Recall@5 选优、patience=10、单 GPU、梯度累积16。四组均重新训练 SID 和 TIGER。SID 训练直接使用当前默认配置：RQ-kmeans 每层1,000 step、共3,000 step，RQ-VAE 共15,000 step，无 epoch 上限；每组1 GPU、batch2,048；其余SID参数沿用默认值。相对八卡默认配置，全局batch由16,384改为2,048。两者预算和结构不同，不能声称计算成本相同。推理 float32，batch8，beam10/20/50，不施加前缀约束。GPU共享策略为 allow_gpu_sharing={cfg.get('allow_gpu_sharing', False)}；预检已有进程与剩余显存记录在study_manifest，耗时不能视为独占GPU下的纯运行性能。原 Beauty + RQ-kmeans 只用于 GR 配置和固定分组校验，不纳入本轮四组结果。
+嵌入模型：{cfg.get('embedding_model_id', 'google/flan-t5-xl')}，维度：{cfg['embedding_dim']}。seed=42；TIGER 使用项目内独立配置 rq_recommender.yaml，最多150 epoch、验证 Recall@5 选优、patience=10、单 GPU、梯度累积16。四组均重新训练 SID 和 TIGER。SID 的训练预算和验证频率以本轮各组保存的训练配置为准；每组1 GPU、batch2,048；其余SID参数沿用默认值。相对八卡默认配置，全局batch由16,384改为2,048。两者预算和结构不同，不能声称计算成本相同。推理 float32，batch8，beam10/20/50，不施加前缀约束。GPU共享策略为 allow_gpu_sharing={cfg.get('allow_gpu_sharing', False)}；预检已有进程与剩余显存记录在study_manifest，耗时不能视为独占GPU下的纯运行性能。分组从本轮各数据集的原始训练交互重新计算并冻结，不依赖历史checkpoint或分析产物。
 
 每个数据集共享语义输入和冻结的原始训练频次分组，各 tokenizer 的 SID 前缀与测试编码分别生成。样本以 dataset + sample_key 唯一关联；每个有效目标在分母中保留。Toys 的有效测试数量由原始数据扫描确定，不套用 Beauty 的22,363。不同数据集不作配对推断。
 

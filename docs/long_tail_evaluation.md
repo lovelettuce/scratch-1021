@@ -7,8 +7,8 @@ conda run --no-capture-output -n grid python -m src.analysis.long_tail run \
   --config configs/analysis/beauty_long_tail.yaml
 ```
 
-如果系统默认 conda 来自其他安装，使用 `/home/yangyujie/data/miniconda3/bin/conda` 替换命令中的 `conda`。也可直接使用环境中的 Python：
-`/home/yangyujie/data/miniconda3/envs/grid/bin/python`。
+如果系统默认 conda 来自其他安装，使用 `/home/lettuce/miniconda3/bin/conda` 替换命令中的 `conda`。也可直接使用环境中的 Python：
+`/home/lettuce/miniconda3/envs/grid/bin/python`。
 
 ## 分阶段、验证和恢复
 

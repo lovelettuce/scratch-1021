@@ -1,4 +1,4 @@
-"""Compose archived TIGER settings and existing method-specific tokenizer recipes."""
+"""Compose standalone TIGER settings and existing method-specific tokenizer recipes."""
 from pathlib import Path
 
 from hydra import compose, initialize_config_dir
@@ -55,22 +55,26 @@ def tokenizer_config(cfg, cell, out, embedding):
 
 def recommender_config(cfg, cell, out, sid):
     from src.utils import custom_hydra_resolvers  # noqa: F401
-    config = OmegaConf.load(Path(cfg['reference']['training_run_dir']) / '.hydra/config.yaml')
+    config = base_config('tiger_train_flat')
+    with open_dict(config):
+        config.merge_with(OmegaConf.load(cfg['recommender']['config']))
     paths_for(config, Path(out), cfg['datasets'][cfg['experiments'][cell]['dataset']])
     with open_dict(config):
         config.semantic_id_path = str(sid)
         config.model.num_embeddings_per_hierarchy = cfg["codebook_width"]
         config.gpu_count = 1
+        config.num_hierarchies = 4
         config.accumulation_steps = cfg['recommender']['accumulation_steps']
+        config.trainer.accumulate_grad_batches = cfg['recommender']['accumulation_steps']
         config.trainer.max_epochs = cfg['recommender']['max_epochs']
         config.trainer.precision = cfg['recommender']['precision']
         config.callbacks.model_checkpoint.save_last = True
     return config
 
 
-def embedding_config(cfg, out):
+def embedding_config(cfg, out, dataset='toys'):
     config = base_config('sem_embeds_inference_flat', 'inference')
-    paths_for(config, Path(out), cfg['datasets']['toys'])
+    paths_for(config, Path(out), cfg['datasets'][dataset])
     config.embedding_model = cfg['embedding_snapshot']
     config.trainer.precision = 32
     return config
